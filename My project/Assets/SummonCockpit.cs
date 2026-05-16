@@ -12,7 +12,7 @@ public class SummonCockpit : MonoBehaviour
 
     void Update()
     {
-        // 오른손 엄지와 검지를 맞대는 핀치(Pinch) 제스처를 감지!
+        // 오른손 엄지와 검지를 맞대는 핀치(Pinch) 제스처를 감지
         // (VR 컨트롤러를 들고 있다면 A버튼을 눌러도 똑같이 작동합니다)
         if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.RTouch))
         {
