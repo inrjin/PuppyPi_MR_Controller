@@ -24,7 +24,15 @@ Meta Quest(Unity)의 UDP_Joystick_Sender.cs 가 보내는 조이스틱 기울기
 
 import argparse
 import socket
+import sys
 import time
+
+# Windows 콘솔(cp949)에서도 한글 출력이 깨지거나 죽지 않도록 UTF-8로 강제
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 
 # ───────────────────────────── 설정 (필요하면 조정) ─────────────────────────────
