@@ -24,10 +24,6 @@ Meta Quest(Unity)의 UDP_Joystick_Sender.cs 가 보내는 조이스틱 기울기
 
 import argparse
 import socket
-<<<<<<< HEAD
-import time
-
-=======
 import sys
 import time
 
@@ -37,8 +33,6 @@ try:
     sys.stderr.reconfigure(encoding="utf-8")
 except Exception:
     pass
-
->>>>>>> 6201a6059921fe2318b74fb30483305acb5bd96e
 
 # ───────────────────────────── 설정 (필요하면 조정) ─────────────────────────────
 DEFAULT_HOST = "0.0.0.0"   # 모든 인터페이스에서 수신 (Quest가 어느 IP로 보내든 받음)

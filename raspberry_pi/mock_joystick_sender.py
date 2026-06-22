@@ -20,10 +20,6 @@ Unity의 UDP_Joystick_Sender.cs 와 똑같은 형식("X:12.3,Z:-5.0")으로
 import argparse
 import math
 import socket
-<<<<<<< HEAD
-import time
-
-=======
 import sys
 import time
 
@@ -33,8 +29,6 @@ try:
     sys.stderr.reconfigure(encoding="utf-8")
 except Exception:
     pass
-
->>>>>>> 6201a6059921fe2318b74fb30483305acb5bd96e
 
 def main():
     ap = argparse.ArgumentParser(description="가짜 조이스틱 UDP 송신기")
