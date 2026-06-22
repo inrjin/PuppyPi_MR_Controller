@@ -18,9 +18,23 @@ import importlib.util
 import math
 import os
 import socket
+<<<<<<< HEAD
 import threading
 import time
 
+=======
+import sys
+import threading
+import time
+
+# Windows 콘솔(cp949)에서도 한글 출력이 깨지거나 죽지 않도록 UTF-8로 강제
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+>>>>>>> 6201a6059921fe2318b74fb30483305acb5bd96e
 PORT = 5005
 DURATION = 3.0   # 테스트 시간(초)
 RATE = 20.0      # 송신 Hz
@@ -80,9 +94,15 @@ def main():
     print("\n")
     print(f"  받은 패킷: {received}개,  정상 파싱: {parsed_ok}개")
     if received > 0 and received == parsed_ok:
+<<<<<<< HEAD
         print("  [통과] 송신 -> 수신 -> 파싱 전부 정상입니다. ✅")
     else:
         print("  [실패] 수신/파싱에 문제가 있습니다. ❌")
+=======
+        print("  [통과] 송신 -> 수신 -> 파싱 전부 정상입니다. (OK)")
+    else:
+        print("  [실패] 수신/파싱에 문제가 있습니다. (FAIL)")
+>>>>>>> 6201a6059921fe2318b74fb30483305acb5bd96e
 
 
 if __name__ == "__main__":
