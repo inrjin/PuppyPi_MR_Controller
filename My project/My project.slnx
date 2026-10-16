@@ -1,4 +1,7 @@
 ﻿<Solution>
+  <Project Path="PuppyPi.EditMode.Tests.csproj" />
+  <Project Path="PuppyPi.Runtime.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="PuppyPi.PlayMode.Tests.csproj" />
 </Solution>

@@ -1,0 +1,5 @@
+{
+  "name": "PuppyPi.Runtime",
+  "references": ["Oculus.Interaction", "Oculus.VR"],
+  "autoReferenced": true
+}

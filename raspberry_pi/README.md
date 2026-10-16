@@ -1,5 +1,10 @@
 # PuppyPi UDP 조이스틱 수신기 (라즈베리파이)
 
+> **현재 Unity v2 연결 UI:** [IP 변경 대응·자동 검색 설치 안내](../docs/CONNECTION_UI.md).
+> 새 `discovery_service.py`와 `puppypi-discovery.service`는 UDP 5002 검색 전용이다.
+> 조종은 별도 Puppy-PI-Cpp 저장소의 v2 서버(5001)를 사용한다.
+> 아래 내용은 이전 5005 문자열 프로토콜 안내이며 새 연결 UI와 호환되지 않는다.
+
 Meta Quest(Unity)에서 보내는 조이스틱 기울기 각도를 라즈베리파이가 받아서
 PuppyPi 로봇 이동 명령으로 바꿔주는 스크립트입니다.
 

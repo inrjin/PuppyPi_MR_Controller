@@ -1,0 +1,238 @@
+diff --git a/puppypi_remote_camera/robot/remote_control.py b/puppypi_remote_camera/robot/remote_control.py
+index b870b8a..2c50b6c 100755
+--- a/puppypi_remote_camera/robot/remote_control.py
++++ b/puppypi_remote_camera/robot/remote_control.py
+@@ -406,10 +406,23 @@ class V2Session:
+         try:
+             packet = parse_v2_packet(data)
+         except V2PacketError as exc:
+-            return self._reject(exc.client_id, exc.sequence, exc.reason, None, str(exc))
++            expired = self.check_timeouts(now)
++            return self._reject(exc.client_id, exc.sequence, exc.reason,
++                                STOP if expired else None, "; ".join(expired + [str(exc)]))
+         return self.handle_packet(packet, address, now)
+ 
+     def handle_packet(self, packet: V2Packet, address, now: float) -> V2Result:
++        # Expiration must precede any sequence/owner/command update, even when
++        # callers use the pure state machine without the UDP receive loop.
++        expired = self.check_timeouts(now)
++        result = self._handle_packet_current(packet, address, now)
++        if expired:
++            event = "; ".join(expired + ([result.event] if result.event else []))
++            return V2Result(result.ack,
++                            STOP if result.velocity is None else result.velocity, event)
++        return result
++
++    def _handle_packet_current(self, packet: V2Packet, address, now: float) -> V2Result:
+         sid = packet.session_id
+         if sid in self._retired:
+             return self._reject(packet.client_id, packet.sequence, "not_owner", None,
+@@ -696,7 +709,8 @@ class RemoteControlServer:
+         except OSError:
+             udp_socket.close()
+             raise
+-        udp_socket.settimeout(min(0.05, self._command_timeout / 3.0))
++        # Leave scheduling headroom beneath the 300ms output-stop test budget.
++        udp_socket.settimeout(min(0.02, self._command_timeout / 3.0))
+         self._socket = udp_socket
+         self._running.set()
+         self.publish_stop_repeated("프로그램 시작")
+@@ -838,9 +852,21 @@ class RemoteControlServer:
+             self._handle_datagram_v1(data, address)
+ 
+     def _handle_datagram_v2(self, data: bytes, address: Tuple[str, int]):
+-        now = time.monotonic()
+         output_error = None
+         with self._lock:
++            now = time.monotonic()
++            # Publish the expiry STOP under the same lock and before applying
++            # any arriving packet (including a new owner or invalid packet).
++            expired = self._v2.check_timeouts(now)
++            if expired:
++                try:
++                    self._emit(*STOP)
++                except Exception as exc:
++                    output_error = "watchdog stop publish failed: %s" % exc
++                    self._v2.enter_fault(output_error)
++                    self._fault = output_error
++                for event in expired:
++                    LOGGER.warning("%s; robot stop before packet", event)
+             result = self._v2.handle_datagram(data, address, now)
+             ack = result.ack
+             if result.velocity is not None:
+diff --git a/puppypi_remote_camera/tests/test_udp_loopback.py b/puppypi_remote_camera/tests/test_udp_loopback.py
+index c2bb1af..4c94087 100644
+--- a/puppypi_remote_camera/tests/test_udp_loopback.py
++++ b/puppypi_remote_camera/tests/test_udp_loopback.py
+@@ -41,14 +41,16 @@ class Recorder:
+         self.lock = threading.Lock()
+         self.velocities = []  # (monotonic, x, y, yaw)
+         self.states = []
++        self.state_changed = threading.Condition()
+ 
+     def publish(self, x, y, yaw):
+         with self.lock:
+             self.velocities.append((time.monotonic(), x, y, yaw))
+ 
+     def on_state(self, snapshot):
+-        with self.lock:
++        with self.state_changed:
+             self.states.append(snapshot)
++            self.state_changed.notify_all()
+ 
+     def snapshot(self):
+         with self.lock:
+@@ -189,7 +191,14 @@ class LoopbackTests(unittest.TestCase):
+         client.neutral()
+         client.command(True, 1.0, 0.0)
+         client.send("emergency_stop")
+-        states = [s["state"] for s in self.recorder.states]
++        # ACK is sent before the observer callback; receiving it is not a
++        # synchronization barrier for the receive thread's subsequent work.
++        with self.recorder.state_changed:
++            self.recorder.state_changed.wait_for(
++                lambda: any(s["state"] == "emergency_stop" for s in self.recorder.states),
++                timeout=0.5,
++            )
++            states = [s["state"] for s in self.recorder.states]
+         for expected in ("awaiting_neutral", "idle", "active", "emergency_stop"):
+             self.assertIn(expected, states)
+ 
+diff --git a/puppypi_remote_camera/tests/test_v2_session.py b/puppypi_remote_camera/tests/test_v2_session.py
+index 78bc0ce..62fd748 100644
+--- a/puppypi_remote_camera/tests/test_v2_session.py
++++ b/puppypi_remote_camera/tests/test_v2_session.py
+@@ -153,11 +153,14 @@ class V2SessionTests(unittest.TestCase):
+             self.assertAck(result, False, "invalid_packet")
+             self.assertEqual((result.ack["client_id"], result.ack["sequence"]), (None, -1))
+         self.assertTrue(self.h.advance(0.06))  # 마지막 유효 command 뒤 0.26초
++        expiry_events = []
+         for _ in range(15):
+             self.h.now += 0.05
+-            self.h.session.handle_datagram(b"{broken", ADDRESS, self.h.now)
+-        events = self.h.advance(0.05)
++            result = self.h.session.handle_datagram(b"{broken", ADDRESS, self.h.now)
++            expiry_events.append(result.event or "")
++        events = expiry_events + self.h.advance(0.05)
+         self.assertTrue(any("lease" in event for event in events), events)
++        self.assertIsNone(self.h.session.snapshot()["owner"])
+ 
+     def test_emergency_stop_latch(self):
+         self.h.neutral()
+diff --git a/puppypi_remote_camera/tests/test_watchdog_boundary.py b/puppypi_remote_camera/tests/test_watchdog_boundary.py
+new file mode 100644
+--- /dev/null
++++ b/puppypi_remote_camera/tests/test_watchdog_boundary.py
+@@ -0,0 +1,112 @@
++"""A packet received just after expiry must not erase the expired interval."""
++import json
++import unittest
++from unittest.mock import patch
++
++from _paths import CLIENT_ID, OTHER_ID
++from remote_control import STOP, V2Session, RemoteControlServer
++
++ADDRESS = ("127.0.0.1", 43000)
++
++
++def command(sequence, active=True, client=CLIENT_ID):
++    return json.dumps(dict(protocol=2, type="command", client_id=client,
++                          sequence=sequence, control_active=active,
++                          forward=0.6 if active else 0.0, turn=-0.3 if active else 0.0)).encode()
++
++
++class WatchdogBoundaryTests(unittest.TestCase):
++    def session(self):
++        session = V2Session(5, 3, 0.2, 0.25, 1.0)
++        session.handle_datagram(command(1, False), ADDRESS, 0)
++        session.handle_datagram(command(2), ADDRESS, 0)
++        return session
++
++    def test_packet_after_boundary_cannot_hide_timeout(self):
++        s = self.session()
++        self.assertEqual(s.check_timeouts(0.249), [])
++        result = s.handle_datagram(command(3), ADDRESS, 0.251)
++        self.assertFalse(result.ack["accepted"])
++        self.assertEqual(result.ack["reason"], "neutral_required")
++        self.assertEqual(result.velocity, STOP)
++        self.assertEqual(s.target, STOP)
++
++    def test_exact_boundary_also_expires(self):
++        self.assertFalse(self.session().handle_datagram(command(3), ADDRESS, 0.25).ack["accepted"])
++
++    def test_before_boundary_still_accepts(self):
++        self.assertTrue(self.session().handle_datagram(command(3), ADDRESS, 0.249).ack["accepted"])
++
++    def test_invalid_and_foreign_packets_still_return_stop_on_expiry(self):
++        for data in (b"{bad", command(3, client=OTHER_ID), command(2)):
++            with self.subTest(data=data):
++                result = self.session().handle_datagram(data, ADDRESS, 0.251)
++                self.assertFalse(result.ack["accepted"])
++                self.assertEqual(result.velocity, STOP)
++
++    def test_new_neutral_then_new_active_is_required(self):
++        s = self.session()
++        s.handle_datagram(command(3), ADDRESS, 0.251)
++        self.assertTrue(s.handle_datagram(command(4, False), ADDRESS, 0.26).ack["accepted"])
++        self.assertTrue(s.handle_datagram(command(5), ADDRESS, 0.27).ack["accepted"])
++
++    def test_expired_lease_accepts_new_owner_only_after_stop(self):
++        s = self.session()
++        result = s.handle_datagram(command(1, client=OTHER_ID), ("127.0.0.1", 44000), 1.01)
++        self.assertFalse(result.ack["accepted"])
++        self.assertEqual(result.ack["reason"], "neutral_required")
++        self.assertEqual(result.velocity, STOP)
++
++    def test_server_publishes_stop_even_when_expiring_packet_is_invalid(self):
++        emitted = []
++        config = dict(protocol_version=2, control_port=5001, command_timeout_seconds=0.25,
++                      velocity_limits=dict(max_forward_cm_s=5, max_reverse_cm_s=3, max_yaw_rate_rad_s=0.2))
++        server = RemoteControlServer(config, lambda *v: emitted.append(v))
++        with patch("remote_control.time.monotonic", return_value=0):
++            server._handle_datagram(command(1, False), ADDRESS)
++            server._handle_datagram(command(2), ADDRESS)
++        emitted.clear()
++        with patch("remote_control.time.monotonic", return_value=0.251):
++            server._handle_datagram(b"{bad", ADDRESS)
++        self.assertTrue(emitted)
++        self.assertEqual(emitted[0], STOP)
++        self.assertTrue(all(v == STOP for v in emitted))
++
++    def test_server_publishes_stop_before_rejecting_late_active(self):
++        emitted, acks = [], []
++        config = dict(protocol_version=2, control_port=5001, command_timeout_seconds=0.25,
++                      velocity_limits=dict(max_forward_cm_s=5, max_reverse_cm_s=3, max_yaw_rate_rad_s=0.2))
++        server = RemoteControlServer(config, lambda *v: emitted.append(v))
++        server._send_payload = lambda address, payload: acks.append(payload)
++        with patch("remote_control.time.monotonic", return_value=0):
++            server._handle_datagram(command(1, False), ADDRESS)
++            server._handle_datagram(command(2), ADDRESS)
++        emitted.clear()
++        with patch("remote_control.time.monotonic", return_value=0.251):
++            server._handle_datagram(command(3), ADDRESS)
++        self.assertTrue(emitted)
++        self.assertTrue(all(v == STOP for v in emitted))
++        self.assertEqual(acks[-1]["reason"], "neutral_required")
++
++    def test_failed_expiry_stop_latches_fault_before_new_packet(self):
++        fail = [False]
++
++        def publish(*velocity):
++            if fail[0]:
++                raise RuntimeError("stop publisher unavailable")
++
++        config = dict(protocol_version=2, control_port=5001, command_timeout_seconds=0.25,
++                      velocity_limits=dict(max_forward_cm_s=5, max_reverse_cm_s=3, max_yaw_rate_rad_s=0.2))
++        server = RemoteControlServer(config, publish)
++        with patch("remote_control.time.monotonic", return_value=0):
++            server._handle_datagram(command(1, False), ADDRESS)
++            server._handle_datagram(command(2), ADDRESS)
++        fail[0] = True
++        with patch("remote_control.time.monotonic", return_value=0.251):
++            server._handle_datagram(command(3), ADDRESS)
++        self.assertEqual(server.state_snapshot()["state"], "fault")
++        self.assertEqual(server._v2.target, STOP)
++
++
++if __name__ == "__main__":
++    unittest.main()

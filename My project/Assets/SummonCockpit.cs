@@ -10,6 +10,14 @@ public class SummonCockpit : MonoBehaviour
     public float distanceForward = 0.4f; // 눈앞으로 40cm
     public float distanceDown = 0.4f;    // 눈에서 아래로 40cm (가슴~배 높이)
 
+    private Quaternion authoredTilt;
+
+    void Awake()
+    {
+        if (cockpitBase != null)
+            authoredTilt = Quaternion.Inverse(Quaternion.Euler(0, cockpitBase.eulerAngles.y, 0)) * cockpitBase.rotation;
+    }
+
     void Update()
     {
         // 오른손 엄지와 검지를 맞대는 핀치(Pinch) 제스처를 감지
@@ -22,6 +30,19 @@ public class SummonCockpit : MonoBehaviour
 
     public void Summon()
     {
+        if (headCamera == null || cockpitBase == null) return;
+        var input = cockpitBase.GetComponent<PuppyPi.BallGripInput>();
+        if (input != null) input.Invalidate();
+        Vector3 oldPosition = cockpitBase.position;
+        Quaternion oldRotation = cockpitBase.rotation;
+        var bodies = cockpitBase.GetComponentsInChildren<Rigidbody>();
+        var positions = new Vector3[bodies.Length];
+        var rotations = new Quaternion[bodies.Length];
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            positions[i] = bodies[i].position;
+            rotations[i] = bodies[i].rotation;
+        }
         // 1. 머리 앞쪽 위치 계산
         Vector3 targetPosition = headCamera.position + (headCamera.forward * distanceForward);
         
@@ -35,6 +56,18 @@ public class SummonCockpit : MonoBehaviour
         Vector3 targetRotation = headCamera.eulerAngles;
         targetRotation.x = 0; 
         targetRotation.z = 0; 
-        cockpitBase.eulerAngles = targetRotation;
+        cockpitBase.rotation = Quaternion.Euler(targetRotation) * authoredTilt;
+        Quaternion delta = cockpitBase.rotation * Quaternion.Inverse(oldRotation);
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            bodies[i].position = targetPosition + delta * (positions[i] - oldPosition);
+            bodies[i].rotation = delta * rotations[i];
+            if (!bodies[i].isKinematic)
+            {
+                bodies[i].linearVelocity = Vector3.zero;
+                bodies[i].angularVelocity = Vector3.zero;
+            }
+        }
+        Physics.SyncTransforms();
     }
 }
