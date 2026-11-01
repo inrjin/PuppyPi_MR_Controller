@@ -20,8 +20,7 @@ public class SummonCockpit : MonoBehaviour
 
     void Update()
     {
-        // 오른손 엄지와 검지를 맞대는 핀치(Pinch) 제스처를 감지
-        // (VR 컨트롤러를 들고 있다면 A버튼을 눌러도 똑같이 작동합니다)
+        // 오른쪽 컨트롤러의 A 버튼으로 콘솔을 다시 배치합니다.
         if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.RTouch))
         {
             Summon();
@@ -33,6 +32,16 @@ public class SummonCockpit : MonoBehaviour
         if (headCamera == null || cockpitBase == null) return;
         var input = cockpitBase.GetComponent<PuppyPi.BallGripInput>();
         if (input != null) input.Invalidate();
+        Vector3 targetPosition = headCamera.position + headCamera.forward * distanceForward;
+        targetPosition.y -= distanceDown;
+        Quaternion targetOrientation = Quaternion.Euler(0, headCamera.eulerAngles.y, 0) * authoredTilt;
+        var placement = cockpitBase.GetComponent<PuppyPi.PuppyPiCockpitPlacement>();
+        if (placement != null)
+        {
+            placement.CancelGrab();
+            placement.MoveTo(new Pose(targetPosition, targetOrientation));
+            return;
+        }
         Vector3 oldPosition = cockpitBase.position;
         Quaternion oldRotation = cockpitBase.rotation;
         var bodies = cockpitBase.GetComponentsInChildren<Rigidbody>();
@@ -43,20 +52,11 @@ public class SummonCockpit : MonoBehaviour
             positions[i] = bodies[i].position;
             rotations[i] = bodies[i].rotation;
         }
-        // 1. 머리 앞쪽 위치 계산
-        Vector3 targetPosition = headCamera.position + (headCamera.forward * distanceForward);
-        
-        // 2. 높이를 내 배꼽/가슴 위치로 내리기 (월드 Y축 기준)
-        targetPosition.y -= distanceDown;
-
-        // 3. 조이스틱 받침대 순간이동!
+        // 이동용 손잡이가 없는 기존 콘솔도 같은 상대 자세를 보존합니다.
         cockpitBase.position = targetPosition;
 
-        // 4. 조이스틱이 항상 나를 바라보도록 회전 (대신 고개를 숙여도 조이스틱이 기울지 않게 Y축만 회전)
-        Vector3 targetRotation = headCamera.eulerAngles;
-        targetRotation.x = 0; 
-        targetRotation.z = 0; 
-        cockpitBase.rotation = Quaternion.Euler(targetRotation) * authoredTilt;
+        // 고개를 숙여도 받침대의 원래 기울기를 유지합니다.
+        cockpitBase.rotation = targetOrientation;
         Quaternion delta = cockpitBase.rotation * Quaternion.Inverse(oldRotation);
         for (int i = 0; i < bodies.Length; i++)
         {

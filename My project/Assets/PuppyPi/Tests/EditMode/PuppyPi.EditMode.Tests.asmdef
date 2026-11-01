@@ -1,6 +1,6 @@
 {
   "name": "PuppyPi.EditMode.Tests",
-  "references": ["PuppyPi.Runtime", "Oculus.Interaction"],
+  "references": ["PuppyPi.Runtime", "Oculus.Interaction", "UnityEngine.UI"],
   "includePlatforms": ["Editor"],
   "optionalUnityReferences": ["TestAssemblies"]
 }

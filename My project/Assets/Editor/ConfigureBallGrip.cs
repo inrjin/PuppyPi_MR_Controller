@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Oculus.Interaction;
+using Oculus.Interaction.HandGrab;
 using PuppyPi;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -48,6 +49,11 @@ public static class ConfigureBallGrip
         body.interpolation = RigidbodyInterpolation.Interpolate;
         body.solverIterations = 12;
         body.solverVelocityIterations = 12;
+        // Installation helpers must not grab the fixed base through the handle's colliders.
+        foreach (var interactable in grip.GetComponentsInChildren<HandGrabInteractable>(true))
+            if (interactable.Rigidbody == joint.connectedBody) interactable.gameObject.SetActive(false);
+        foreach (var interactable in grip.GetComponentsInChildren<GrabInteractable>(true))
+            if (interactable.Rigidbody == joint.connectedBody) interactable.gameObject.SetActive(false);
         var input = GetOrAdd<BallGripInput>(root);
         input.baseFrame = root.transform;
         input.grip = grip;

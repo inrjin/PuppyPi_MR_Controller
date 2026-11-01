@@ -8304,7 +8304,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1184087863
 Transform:
   m_ObjectHideFlags: 0
@@ -9203,6 +9203,13 @@ GameObject:
   - component: {fileID: 1340036262}
   - component: {fileID: 1340036264}
   - component: {fileID: 1340036263}
+  - component: {fileID: 1340036265}
+  - component: {fileID: 1340036266}
+  - component: {fileID: 1340036268}
+  - component: {fileID: 1340036267}
+  - component: {fileID: 1340036270}
+  - component: {fileID: 1340036269}
+  - component: {fileID: 1340036271}
   m_Layer: 0
   m_Name: Console_BallGrip
   m_TagString: Untagged
@@ -9404,6 +9411,7 @@ Transform:
   m_Children:
   - {fileID: 1740201260245274703}
   - {fileID: 1387574436}
+  - {fileID: 1347549631}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: -90, y: 0, z: 0}
 --- !u!114 &1340036262
@@ -9458,11 +9466,124 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   input: {fileID: 1340036262}
-  networkEnabled: 0
-  robotAddress:
+  networkEnabled: 1
+  robotAddress: 192.168.100.153
   port: 5001
   ackTimeoutSeconds: 0.3
   maxAckAgeSeconds: 0.2
+  speedScale: 1
+--- !u!114 &1340036265
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ec9f7af070b504a11bf9dcf53e3b739e, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  driveClient: {fileID: 1340036264}
+  gripInput: {fileID: 1340036262}
+  rosBridge: {fileID: 1340036268}
+  cameraStream: {fileID: 1340036267}
+  mapStream: {fileID: 1340036270}
+  mediaClient: {fileID: 1340036269}
+  floatingScreen: {fileID: 0}
+  dashboard: {fileID: 1347549632}
+  cockpitPlacement: {fileID: 1340036271}
+  connection: {fileID: 1340036266}
+  showCameraScreenOnStart: 1
+  speedPercent: 50
+--- !u!114 &1340036266
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 439a39c07f88421184bf2984f90e8756, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  client: {fileID: 1340036264}
+  AddressText:
+  PortText: 5001
+--- !u!114 &1340036267
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9a2ef8f6ae44da9821362b552162f31, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  streamEnabled: 1
+  maximumFramesPerSecond: 12
+--- !u!114 &1340036268
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 09cd1a1ce17449d3a531f2b9e8770946, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  connectTimeoutSeconds: 5
+  reconnectDelaySeconds: 2
+  serviceTimeoutSeconds: 5
+  actionTimeoutSeconds: 60
+  statusFreshSeconds: 2.5
+--- !u!114 &1340036269
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c3646ba44ac344308af7d21638efac35, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+--- !u!114 &1340036270
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9a2ef8f6ae44da9821362b552162f31, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  streamEnabled: 1
+  maximumFramesPerSecond: 12
+--- !u!114 &1340036271
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1340036252}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ccf5ea9760934268a27ffa801e77f5e7, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  cockpitRoot: {fileID: 1340036261}
+  input: {fileID: 1340036262}
+  handleOffsetMeters: {x: 0.065, y: 0, z: 0.008}
+  handleSizeMeters: {x: 0.025, y: 0.09, z: 0.025}
 --- !u!1 &1340286469
 GameObject:
   m_ObjectHideFlags: 0
@@ -9574,6 +9695,54 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1736862922}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1347549630
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1347549631}
+  - component: {fileID: 1347549632}
+  m_Layer: 0
+  m_Name: PuppyPi VR control panel
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1347549631
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1347549630}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.7063922, y: 0.21892837, z: 0.1992636, w: 0.64294213}
+  m_LocalPosition: {x: 0.48, y: 0.2520002, z: -0.78000003}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1340036261}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1347549632
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1347549630}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d155a9cf499e4bd9a7657a1418bd5dcc, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  controller: {fileID: 1340036265}
+  metersPerPixel: 0.0009
+  minimumScale: 0.35
+  maximumScale: 2
 --- !u!1 &1356593492
 GameObject:
   m_ObjectHideFlags: 0

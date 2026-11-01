@@ -17,6 +17,8 @@ namespace PuppyPi
         [Tooltip("Provisional test value; not an agreed robot/Quest policy.")]
         [Range(0.1f, 2f)] public float ackTimeoutSeconds = 0.3f;
         [Range(0.05f, 1f)] public float maxAckAgeSeconds = 0.2f;
+        [Range(0.1f, 1f)] public float speedScale = 1f;
+        public bool ExternalMotionBlocked { get; private set; }
         public V2Session Session { get; private set; } = new V2Session();
         public V2Command LastCommand { get; private set; }
         public long LastSentSequence { get; private set; }
@@ -31,6 +33,7 @@ namespace PuppyPi
         private bool _paused;
         private bool _focused = true;
         private string _pendingEvent;
+        private string _lastAckDiagnostic;
 
         // Only an explicit Connect action starts a new session. Automatic transport
         // recovery keeps the existing UUID and the server's ownership lease rules.
@@ -51,6 +54,7 @@ namespace PuppyPi
             _pendingEvent = emergency ? "emergency_stop" : null;
             LastCommand = null;
             LastSentSequence = 0;
+            _lastAckDiagnostic = null;
             robotAddress = address.ToString();
             port = targetPort;
             _retryOpen = 0;
@@ -89,7 +93,16 @@ namespace PuppyPi
             }
         }
 
-        private bool InputValid => !_paused && _focused && input != null && input.ControlActive;
+        private bool InputValid => !_paused && _focused && !ExternalMotionBlocked && input != null && input.ControlActive;
+
+        public void SetExternalMotionBlocked(bool blocked)
+        {
+            if (ExternalMotionBlocked == blocked) return;
+            ExternalMotionBlocked = blocked;
+            if (!blocked) return;
+            if (input != null) input.Invalidate();
+            RequestNeutral();
+        }
 
         private void OpenTransport()
         {
@@ -127,6 +140,16 @@ namespace PuppyPi
                     if (!source.Equals(_remote) || bytes.Length > 2048) continue;
                     if (!V2AckParser.TryParse(Encoding.UTF8.GetString(bytes), out V2Ack ack)) continue;
                     if (!Session.AcceptAck(ack, Now, maxAckAgeSeconds)) continue;
+                    if (Debug.isDebugBuild)
+                    {
+                        string diagnostic = $"{ack.accepted}/{ack.state}/{ack.reason}/{ack.emergency_stop}";
+                        if (diagnostic != _lastAckDiagnostic)
+                        {
+                            _lastAckDiagnostic = diagnostic;
+                            Debug.Log($"PUPPYPI_V2_ACK accepted={ack.accepted} state={ack.state} reason={ack.reason} " +
+                                $"emergency={ack.emergency_stop} neutral={Session.NeutralConfirmed}", this);
+                        }
+                    }
                     TransportStatus = ack.accepted ? "ACK accepted (not measured motion)" : "ACK rejected";
                     if (_pendingEvent == Session.LastAckKind && ack.accepted) _pendingEvent = null;
                     if (!Session.NeutralConfirmed && input != null && input.ControlActive) input.Invalidate();
@@ -149,7 +172,8 @@ namespace PuppyPi
             }
 #endif
             Vector2 axes = input != null ? input.Axes : Vector2.zero;
-            V2Command message = Session.Command(Now, InputValid, axes.x, axes.y);
+            float scale = float.IsNaN(speedScale) || float.IsInfinity(speedScale) ? 0 : Mathf.Clamp01(speedScale);
+            V2Command message = Session.Command(Now, InputValid, axes.x * scale, axes.y * scale);
             if (Send(JsonUtility.ToJson(message), message.sequence)) LastCommand = message;
         }
 

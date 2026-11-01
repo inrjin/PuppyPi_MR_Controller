@@ -22,6 +22,17 @@ namespace PuppyPi.Tests
         private long _lastSequence;
         private string _uuid;
 
+        [SetUp]
+        public void ResetSessionFixture()
+        {
+            _sourcePort = 0;
+            _lastSequence = 0;
+            _uuid = null;
+            _emergency = false;
+            _commands.Clear();
+            _events.Clear();
+        }
+
         [UnityTearDown]
         public IEnumerator Cleanup()
         {
@@ -68,6 +79,49 @@ namespace PuppyPi.Tests
                 }
                 yield return null;
             }
+        }
+
+        [UnityTest]
+        public IEnumerator SpeedAndExternalOperationBlockPreserveNeutralAndRegrab()
+        {
+            _server = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            _root = new GameObject("Dashboard drive loopback test");
+            _root.SetActive(false);
+            var grip = new GameObject("Grip");
+            grip.transform.SetParent(_root.transform);
+            var input = _root.AddComponent<BallGripInput>();
+            input.grip = grip.transform;
+            input.baseFrame = _root.transform;
+            input.editorPreview = true;
+            var client = _root.AddComponent<PuppyPiV2Client>();
+            client.input = input;
+            client.robotAddress = "127.0.0.1";
+            client.port = ((IPEndPoint)_server.Client.LocalEndPoint).Port;
+            client.networkEnabled = true;
+            client.speedScale = 0.5f;
+            _root.SetActive(true);
+            yield return Pump(0.2f);
+            grip.transform.localRotation = BallGripMath.Rotation(new Vector2(26, -15.5f));
+            input.previewGrabbed = true;
+            yield return Pump(0.2f);
+            Assert.That(client.LastCommand.control_active, Is.True);
+            Assert.That(client.LastCommand.forward, Is.EqualTo(0.3f).Within(0.01));
+            Assert.That(client.LastCommand.turn, Is.EqualTo(-0.15f).Within(0.01));
+
+            client.SetExternalMotionBlocked(true);
+            Assert.That(client.LastCommand.control_active, Is.False, "robot operations must neutralize immediately");
+            Assert.That(client.LastCommand.forward, Is.Zero);
+            Assert.That(client.LastCommand.turn, Is.Zero);
+            yield return Pump(0.15f);
+            client.SetExternalMotionBlocked(false);
+            yield return Pump(0.15f);
+            Assert.That(client.LastCommand.control_active, Is.False, "operation completion must not restart a held grip");
+            input.previewGrabbed = false;
+            yield return Pump(0.15f);
+            input.previewGrabbed = true;
+            yield return Pump(0.15f);
+            Assert.That(client.LastCommand.control_active, Is.True);
+            Assert.That(client.LastCommand.forward, Is.EqualTo(0.3f).Within(0.01));
         }
 
         [UnityTest]

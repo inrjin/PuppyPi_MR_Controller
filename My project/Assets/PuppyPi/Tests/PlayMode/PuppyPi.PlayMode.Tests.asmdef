@@ -1,5 +1,5 @@
 {
   "name": "PuppyPi.PlayMode.Tests",
-  "references": ["PuppyPi.Runtime", "Oculus.Interaction"],
+  "references": ["PuppyPi.Runtime", "Oculus.Interaction", "UnityEngine.UI"],
   "optionalUnityReferences": ["TestAssemblies"]
 }

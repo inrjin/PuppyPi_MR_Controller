@@ -31,6 +31,7 @@ namespace PuppyPi
 
         private void Update()
         {
+            if (client == null) return;
             // Quest Touch: B = latched stop; Y = explicit clear (grip released).
             if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch)) client.EmergencyStop();
             if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.LTouch)) client.ClearEmergency();
@@ -48,14 +49,56 @@ namespace PuppyPi
         {
             if (input == null || client == null) return "BallGrip references missing";
             V2Session state = client.Session;
+            string header;
+            string action;
+            if (!client.networkEnabled)
+            {
+                header = "DISCONNECTED";
+                action = "CONNECT TO THE ROBOT FIRST";
+            }
+            else if (!state.Connected)
+            {
+                header = "WAITING FOR ACK";
+                action = "RELEASE GRIP; WAIT FOR THE ROBOT RESPONSE";
+            }
+            else if (state.ServerReason == "not_owner")
+            {
+                header = "CONTROL SESSION REJECTED";
+                action = "RESTART APP; CHECK THE ROBOT'S CURRENT OWNER";
+            }
+            else if (state.Emergency)
+            {
+                header = "EMERGENCY STOP";
+                action = "RELEASE GRIP; CLEAR THE EMERGENCY STOP";
+            }
+            else if (state.Faulted)
+            {
+                header = "ROBOT FAULT";
+                action = "RELEASE GRIP; CHECK THE ROBOT FAULT";
+            }
+            else if (!state.LastAccepted)
+            {
+                header = "CONTROL REJECTED";
+                action = "RELEASE GRIP; CHECK THE SERVER REASON";
+            }
+            else
+            {
+                header = "CONNECTED";
+                if (!state.NeutralConfirmed)
+                    action = "RELEASE GRIP; WAIT FOR NEUTRAL ACK";
+                else if (input.Grabbed && (!input.ControlActive || !state.Armed))
+                    action = "RELEASE AND GRAB AGAIN";
+                else
+                    action = input.Grabbed ? "RELEASE GRIP TO STOP" : "GRAB TO CONTROL";
+            }
             // Keep the headset HUD ASCII: the built-in runtime font has no guaranteed Korean glyphs on Quest.
-            return $"PUPPYPI {(client.networkEnabled ? state.Connected ? "CONNECTED" : "WAITING FOR ACK" : "DISCONNECTED")}\n" +
+            return $"PUPPYPI {header}\n" +
                 $"{client.robotAddress}:{client.port}\n" +
                 $"BALL GRIP  F {input.Axes.x:F2}  T {input.Axes.y:F2}\n" +
                 $"Grab {input.Grabbed}  Tracking {input.TrackingValid}\n" +
                 $"TX {(client.LastCommand != null && client.LastCommand.control_active ? "ACTIVE" : "NEUTRAL")}  ACK {client.AckAge:F2}s\n" +
                 $"{state.ServerState} / {state.ServerReason}  accepted={state.LastAccepted}\n" +
-                $"{client.TransportStatus}\nB: EMERGENCY STOP   Y: CLEAR (release first)";
+                $"{client.TransportStatus}\n{action}\nB: EMERGENCY STOP   Y: CLEAR (release first)";
         }
 
 #if UNITY_EDITOR || UNITY_STANDALONE
