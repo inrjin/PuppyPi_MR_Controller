@@ -232,6 +232,47 @@ namespace PuppyPi.Tests
         }
 
         [UnityTest]
+        public IEnumerator SupervisedExplicitCommandClicksWorkWhileGrabbedWithoutUnlockingTabsOrStudyCommands()
+        {
+            BuildFixture();
+            yield return null;
+            int commands = 0;
+            var createCommand = typeof(PuppyPiVrPanel).GetMethod("Command", BindingFlags.Instance | BindingFlags.NonPublic);
+            // A harmless callback exercises native button routing without
+            // opening a robot channel or submitting a motion request.
+            var command = (Button)createCommand.Invoke(_panel, new object[] {
+                _panel.PanelRoot.GetComponentInChildren<Canvas>().transform, "Fixture explicit motion command", 24f, 700f, 186f, 40f,
+                new System.Action<PuppyPiRobotController>(_ => commands++),
+                new System.Func<PuppyPiRobotController, bool>(_ => true), null, false, true
+            });
+            var pointer = new PointerEventData(_fixture.GetComponent<EventSystem>()) {
+                button = PointerEventData.InputButton.Left
+            };
+            var grab = _panel.PanelRoot.GetComponent<Grabbable>();
+            Pose pose = GripPose("Left");
+            Select(grab, 601, pose);
+            Assert.That(_panel.IsGrabbed, Is.True);
+            ExecuteEvents.Execute(command.gameObject, pointer, ExecuteEvents.pointerEnterHandler);
+            Assert.That(commands, Is.Zero, "hover must never send a command");
+            ExecuteEvents.Execute(command.gameObject, pointer, ExecuteEvents.pointerClickHandler);
+            Assert.That(commands, Is.EqualTo(1), "an explicit supervised command click is not a layout lock");
+            Click("MAP");
+            Assert.That(PageVisible("MAP"), Is.False, "ordinary page/edit buttons retain their grab protection");
+
+            _controller.PathClient.operatorSupervisedNavigation = false;
+            ExecuteEvents.Execute(command.gameObject, pointer, ExecuteEvents.pointerClickHandler);
+            Assert.That(commands, Is.EqualTo(1), "strict mode retains the previous command grab guard");
+            _controller.PathClient.operatorSupervisedNavigation = true;
+            typeof(PuppyPiStudyClient).GetProperty("Active").SetValue(_controller.studyClient, true);
+            ExecuteEvents.Execute(command.gameObject, pointer, ExecuteEvents.pointerClickHandler);
+            Assert.That(commands, Is.EqualTo(1), "study command policy is not relaxed by the supervised layout exception");
+            typeof(PuppyPiStudyClient).GetProperty("Active").SetValue(_controller.studyClient, false);
+            Click("UDP STOP");
+            Assert.That(_drive.Session.Emergency, Is.True, "explicit STOP remains usable during a grab");
+            Pointer(grab, 601, PointerEventType.Unselect, pose);
+        }
+
+        [UnityTest]
         public IEnumerator RecenterKeepsChosenScaleCancelsGrabAndOrdinaryButtonsIgnoreDragging()
         {
             BuildFixture();

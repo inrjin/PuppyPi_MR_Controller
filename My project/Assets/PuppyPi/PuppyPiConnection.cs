@@ -38,6 +38,29 @@ namespace PuppyPi
             SavedName = PlayerPrefs.GetString(PreferenceKey + "name", "");
         }
 
+        private void Start()
+        {
+            if (Application.platform == RuntimePlatform.Android) RestoreSavedEndpoint();
+        }
+
+        private bool RestoreSavedEndpoint()
+        {
+            // Serialized scene addresses are installation defaults. A saved
+            // successful endpoint takes precedence at cold startup only; this
+            // must neither enable offline mode nor override an explicit connect.
+            if (client == null || !client.networkEnabled || client.LastSentSequence != 0 ||
+                client.Session.Retired || client.TransportStatus != "local preview" ||
+                !IPAddress.TryParse(AddressText, out var address) ||
+                address.AddressFamily != AddressFamily.InterNetwork || address.Equals(IPAddress.Any) ||
+                address.Equals(IPAddress.Broadcast) || address.GetAddressBytes()[0] >= 224 ||
+                !int.TryParse(PortText, NumberStyles.None, CultureInfo.InvariantCulture, out int port) ||
+                port < 1 || port > 65535) return false;
+            client.robotAddress = address.ToString();
+            client.port = port;
+            if (Debug.isDebugBuild) Debug.Log($"PUPPYPI_CONNECTION_RESTORE endpoint={client.robotAddress}:{port}", this);
+            return true;
+        }
+
         public void Search()
         {
             HasSearched = true;

@@ -99,7 +99,7 @@ namespace PuppyPi
             _host = host;
             int generation = _generation;
             StartCoroutine(Poll("/api/media", generation, 30));
-            StartCoroutine(Poll("/api/map", generation, 1));
+            StartCoroutine(Poll("/api/map", generation, 0.25f));
             StartCoroutine(Poll("/api/status", generation, 1));
         }
 

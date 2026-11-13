@@ -7,7 +7,7 @@ using UnityEngine;
 namespace PuppyPi
 {
     [DefaultExecutionOrder(-100)]
-    public sealed class BallGripInput : MonoBehaviour
+    public sealed class BallGripInput : MonoBehaviour, IRobotDriveInput
     {
         public Transform grip;
         public Transform baseFrame;
@@ -30,6 +30,29 @@ namespace PuppyPi
         public bool Grabbed { get; private set; }
         public bool TrackingValid { get; private set; }
         public bool ControlActive => isActiveAndEnabled && Grabbed && TrackingValid && !_blocked;
+        public Vector2 RawAxes => Tilt;
+        public Vector2 RequestedAxes => new Vector2(
+            BallGripMath.Normalize(Tilt.x, deadzoneDegrees, maxTiltDegrees, sensitivity) * (invertForward ? -1 : 1),
+            BallGripMath.Normalize(Tilt.y, deadzoneDegrees, maxTiltDegrees, sensitivity) * (invertTurn ? -1 : 1));
+        public bool Engaged => Grabbed;
+        public bool InputValid => TrackingValid && _focused && !_paused;
+        public bool Focused => _focused;
+        public bool Paused => _paused;
+        public string InterfaceId => "mr_ballgrip";
+        public string RawUnits => "degrees";
+        public string InputModality => IsSimulation ? "editor_preview" :
+            _source is HandGrabInteractor ? "hand_tracking" : _source is GrabInteractor ? "controller_grab" : "none";
+        public bool IsSimulation
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return editorPreview;
+#else
+                return false;
+#endif
+            }
+        }
         public event Action NeutralRequested;
         public event Action<bool> GrabChanged;
         public Quaternion Neutral { get; private set; }
@@ -120,9 +143,7 @@ namespace PuppyPi
             if (grip == null || baseFrame == null) { Invalidate(); return; }
             Quaternion relative = Quaternion.Inverse(Neutral) * Quaternion.Inverse(baseFrame.rotation) * grip.rotation;
             Tilt = BallGripMath.TiltDegrees(relative);
-            Axes = ControlActive ? new Vector2(
-                BallGripMath.Normalize(Tilt.x, deadzoneDegrees, maxTiltDegrees, sensitivity) * (invertForward ? -1 : 1),
-                BallGripMath.Normalize(Tilt.y, deadzoneDegrees, maxTiltDegrees, sensitivity) * (invertTurn ? -1 : 1)) : Vector2.zero;
+            Axes = ControlActive ? RequestedAxes : Vector2.zero;
         }
 
         public void Invalidate()

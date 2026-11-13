@@ -17,6 +17,15 @@ namespace PuppyPi
         public Transform HandleRoot => _handleRoot != null ? _handleRoot.transform : null;
         public Grabbable HandleGrabbable => _handleGrab;
         public bool IsGrabbed => _selected && isActiveAndEnabled && _handleRoot != null && _handleRoot.activeInHierarchy;
+        public bool PlacementLocked { get; private set; }
+
+        public void SetPlacementLocked(bool locked)
+        {
+            if (PlacementLocked == locked) return;
+            PlacementLocked = locked;
+            if (locked) CancelGrab();
+            if (_handleRoot != null) _handleRoot.SetActive(!locked && isActiveAndEnabled);
+        }
 
         private GameObject _handleRoot;
         private Grabbable _handleGrab;
@@ -81,7 +90,7 @@ namespace PuppyPi
             controller.InjectOptionalPointableElement(_handleGrab);
             controller.UseClosestPointAsGrabSource = true;
             controller.ResetGrabOnGrabsUpdated = false;
-            _handleRoot.SetActive(isActiveAndEnabled);
+            _handleRoot.SetActive(isActiveAndEnabled && !PlacementLocked);
             Physics.SyncTransforms();
         }
 
@@ -124,6 +133,7 @@ namespace PuppyPi
 
         public void BeginTransform()
         {
+            if (PlacementLocked) return;
             if (cockpitRoot == null || _grabbable == null || _grabbable.GrabPoints.Count == 0) return;
             _grabStart = _grabbable.GrabPoints[0];
             _rootStart = new Pose(cockpitRoot.position, cockpitRoot.rotation);
@@ -151,7 +161,7 @@ namespace PuppyPi
         // so authored grip/joint poses and the root's -90-degree tilt survive.
         public bool MoveTo(Pose target)
         {
-            if (cockpitRoot == null || !ValidPose(target)) return false;
+            if (PlacementLocked || cockpitRoot == null || !ValidPose(target)) return false;
             target.rotation = target.rotation.normalized;
             Vector3 oldPosition = cockpitRoot.position;
             Quaternion delta = target.rotation * Quaternion.Inverse(cockpitRoot.rotation);
@@ -186,7 +196,7 @@ namespace PuppyPi
             {
                 bool active = _handleRoot.activeSelf;
                 _handleRoot.SetActive(false);
-                if (active && isActiveAndEnabled) _handleRoot.SetActive(true);
+                if (active && isActiveAndEnabled && !PlacementLocked) _handleRoot.SetActive(true);
             }
             if (input != null) input.Invalidate();
         }
@@ -203,7 +213,7 @@ namespace PuppyPi
 
         private void OnEnable()
         {
-            if (_handleRoot != null) _handleRoot.SetActive(true);
+            if (_handleRoot != null) _handleRoot.SetActive(!PlacementLocked);
         }
 
         private void OnDisable()

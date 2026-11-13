@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 
 namespace PuppyPi
 {
@@ -35,6 +37,29 @@ namespace PuppyPi
         public string reason;
         public bool emergency_stop;
         public string state;
+    }
+
+    // JsonUtility does not support the protocol's nested numeric arrays.
+    public sealed class V2Path
+    {
+        public string ClientId { get; }
+        public long Sequence { get; }
+        private readonly double[][] _points;
+        internal V2Path(string clientId, long sequence, double[][] points)
+        { ClientId = clientId; Sequence = sequence; _points = points; }
+        public string ToJson()
+        {
+            var json = new StringBuilder("{\"protocol\":2,\"type\":\"path\",\"client_id\":\"");
+            json.Append(ClientId).Append("\",\"sequence\":").Append(Sequence.ToString(CultureInfo.InvariantCulture))
+                .Append(",\"points\":[");
+            for (int i = 0; i < _points.Length; i++)
+            {
+                if (i != 0) json.Append(',');
+                json.Append('[').Append(_points[i][0].ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                    .Append(_points[i][1].ToString("R", CultureInfo.InvariantCulture)).Append(']');
+            }
+            return json.Append("]}").ToString();
+        }
     }
 
     // No Unity or socket dependency: all time is supplied by the caller's monotonic clock.
@@ -127,6 +152,32 @@ namespace PuppyPi
             return new V2Event { client_id = ClientId, sequence = Register(now, kind, false), type = kind };
         }
 
+        public V2Path Path(double now, IReadOnlyList<double[]> points)
+        {
+            if (!Connected || !NeutralConfirmed || !LastAccepted || Emergency || Faulted || Retired)
+                throw new InvalidOperationException("An accepted neutral session is required for a path");
+            if (points == null || points.Count < 1 || points.Count > 20)
+                throw new ArgumentException("A path requires 1 to 20 points", nameof(points));
+            var copy = new double[points.Count][];
+            for (int i = 0; i < points.Count; i++)
+            {
+                var p = points[i];
+                if (p == null || p.Length != 2 || !Coordinate(p[0]) || !Coordinate(p[1]))
+                    throw new ArgumentException("Path coordinates must be finite and within 100 metres", nameof(points));
+                copy[i] = new[] { p[0], p[1] };
+            }
+            Armed = false;
+            return new V2Path(ClientId, Register(now, "path", false), copy);
+        }
+
+        public V2Event PathCancel(double now)
+        {
+            Block();
+            return new V2Event { client_id = ClientId, sequence = Register(now, "path_cancel", false), type = "path_cancel" };
+        }
+
+        private static bool Coordinate(double value) => !double.IsNaN(value) && !double.IsInfinity(value) && Math.Abs(value) <= 100;
+
         private long Register(double now, string kind, bool neutral)
         {
             if (LastSequence >= 9007199254740991L) throw new InvalidOperationException("v2 sequence exhausted");
@@ -141,9 +192,8 @@ namespace PuppyPi
 
         public bool AcceptAck(V2Ack ack, double now, double maxAge)
         {
-            if (ack == null || ack.protocol != 2 || ack.type != "ack" || ack.client_id != ClientId ||
-                ack.sequence <= LastAckSequence || !_sent.TryGetValue(ack.sequence, out Sent sent) ||
-                now < sent.at || now - sent.at > maxAge || !KnownState(ack.state) || !KnownReason(ack.reason)) return false;
+            if (!TryGetAckKind(ack, now, maxAge, out _) || ack.sequence <= LastAckSequence) return false;
+            Sent sent = _sent[ack.sequence];
             LastAckSequence = ack.sequence;
             LastAckTime = now;
             Connected = true;
@@ -155,10 +205,22 @@ namespace PuppyPi
             if (ack.emergency_stop || ack.state == "emergency_stop") Emergency = true;
             if (sent.kind == "clear_emergency" && ack.accepted && !ack.emergency_stop) Emergency = false;
             if (!ack.accepted || ack.state == "timeout" || ack.state == "awaiting_neutral" ||
-                Emergency || Faulted || sent.kind != "command")
+                Emergency || Faulted || (sent.kind != "command" && sent.kind != "path"))
                 Block();
             else if (sent.neutral && ack.sequence > _neutralAfter && ack.state == "idle")
                 NeutralConfirmed = true;
+            return true;
+        }
+
+        // An operation receipt can arrive after a newer heartbeat ACK. Validate its
+        // original send record without rolling back global session state/connectivity.
+        public bool TryGetAckKind(V2Ack ack, double now, double maxAge, out string kind)
+        {
+            kind = null;
+            if (ack == null || ack.protocol != 2 || ack.type != "ack" || ack.client_id != ClientId ||
+                !_sent.TryGetValue(ack.sequence, out Sent sent) || now < sent.at || now - sent.at > maxAge ||
+                !KnownState(ack.state) || !KnownReason(ack.reason)) return false;
+            kind = sent.kind;
             return true;
         }
 

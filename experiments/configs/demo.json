@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "config_version": "demo-v1",
+  "profile_status": "demo",
+  "interface_order": ["smartphone_touch", "mr_ballgrip"],
+  "implemented_interfaces": ["mr_ballgrip"],
+  "framing": {
+    "target_marker": "KHCI2027:inspection",
+    "center_tolerance_x": 0.12,
+    "center_tolerance_y": 0.15,
+    "area_ratio_min": 0.02,
+    "area_ratio_max": 0.20,
+    "hold_seconds": 1.0,
+    "max_frame_age": 0.3,
+    "max_frame_gap": 0.3,
+    "time_limit": 60.0,
+    "require_neutral": false,
+    "neutral_threshold": 0.02
+  },
+  "difficulties": {
+    "demo-wide": {"center_tolerance_x": 0.12},
+    "demo-narrow": {"center_tolerance_x": 0.04}
+  }
+}

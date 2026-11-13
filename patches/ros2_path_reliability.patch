@@ -1,0 +1,140 @@
+--- a/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/path_follower.py
++++ b/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/path_follower.py
+@@ -2,7 +2,7 @@
+ 
+ VR 에서 LiDAR 지도 위에 찍은 경유점(지도 좌표 m)을 '제자리 회전 → 직진' 으로 차례로 따라간다.
+ - 4족 보행은 '느린 전진 + 회전' 에서 넘어지기 쉬워(실기 관찰) 회전은 제자리에서만, 직진 중에는 작은 방향 보정만 한다.
+-- 직진 중 몸 앞 stop_distance_m 안(폭 ±half_width_m)에 LiDAR 점이 있으면 멈추고, clear_hold_sec 동안 비어 있으면 다시 간다.
++- 장애물 분류·정지·우회는 MR 에서 수행한다. 로봇은 원시 LiDAR 점으로 별도 blocked/해제 대기를 만들지 않는다.
+ - 로봇 위치(/lidar_map/pose)나 LiDAR(/scan)가 timeout 넘게 끊기면 멈춘다(경로는 유지).
+ - 로봇 위치가 한 번에 jump_cancel_m / jump_cancel_deg 넘게 바뀌면(지도 초기화·위치 추정 튐) 경로를 취소한다.
+   경유점은 이전 지도 좌표라 그대로 따라가면 엉뚱한 곳으로 간다. (조이스틱 조종에는 영향 없음)
+@@ -72,18 +72,25 @@
+     _clear_since: Optional[float] = None
+     _last_pose: Optional[Tuple[float, float, float]] = None
+     _last_pose_t: Optional[float] = None
++    request_client_id: Optional[str] = None
++    request_sequence: Optional[int] = None
+ 
+     @property
+     def active(self) -> bool:
+         return self.state in ACTIVE
+ 
+-    def set_path(self, points, owner, now):
++    def set_path(self, points, owner, now, request_sequence=None):
+         self.points = [(float(x), float(y)) for x, y in points]
+         self.index, self.owner, self.reason, self.waiting = 0, owner, None, None
+         self.blocked_count, self.started = 0, now
+         self.state = "rotate" if self.points else "done"
+         self._seg_start, self._clear_since = None, None
+         self._last_pose, self._last_pose_t = None, None
++        identified = (isinstance(request_sequence, int) and not isinstance(request_sequence, bool)
++                      and 0 <= request_sequence <= 9007199254740991
++                      and isinstance(owner, str) and bool(owner))
++        self.request_client_id = owner if identified else None
++        self.request_sequence = request_sequence if identified else None
+ 
+     def cancel(self, reason: str):
+         if self.active:
+@@ -111,6 +118,9 @@
+         c = self.cfg
+         if pose is None or now - pose_t > c.pose_timeout_sec:
+             self.waiting = "pose"
++            return 0.0, 0.0
++        if scan_pts is None or now - scan_t > c.scan_timeout_sec:
++            self.waiting = "scan"
+             return 0.0, 0.0
+         x, y, th = pose
+         if self._last_pose_t is not None and pose_t != self._last_pose_t and self._last_pose is not None:
+@@ -140,21 +150,7 @@
+         if abs(err) > math.radians(c.rot_enter_deg):
+             self.state, self.waiting = "rotate", None
+             return 0.0, math.copysign(c.yaw_rate, err)
+-        if scan_pts is None or now - scan_t > c.scan_timeout_sec:
+-            self.waiting = "scan"
+-            return 0.0, 0.0
+         self.waiting = None
+-        if obstacle_count(scan_pts, c) >= c.min_obstacle_points:
+-            if self.state != "blocked":
+-                self.blocked_count += 1
+-            self.state, self._clear_since = "blocked", None
+-            return 0.0, 0.0
+-        if self.state == "blocked":
+-            if self._clear_since is None:
+-                self._clear_since = now
+-            if now - self._clear_since < c.clear_hold_sec:
+-                return 0.0, 0.0
+-            self.state = "drive"
+         yaw = max(-c.heading_max, min(c.heading_max, c.heading_kp * err))
+         return c.speed_cm_s, yaw
+ 
+@@ -168,6 +164,7 @@
+                 px, py = tx, ty
+         return {
+             "state": self.state, "waiting": self.waiting, "reason": self.reason,
++            "request_client_id": self.request_client_id, "request_sequence": self.request_sequence,
+             "points": [[round(x, 3), round(y, 3)] for x, y in self.points],
+             "index": self.index, "count": len(self.points),
+             "remaining_m": None if remaining is None else round(remaining, 3),
+--- a/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/receiver_node.py
++++ b/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/receiver_node.py
+@@ -133,7 +133,7 @@
+                             turn_x_deadband=self.turn_x_deadband)
+         self.server = V2UdpServer(
+             session, self._on_output, self.bind_address, self.port, self.poll_interval,
+-            on_estop=self._on_estop, on_state=self._on_state, on_path=self._on_path,
++            on_estop=self._on_estop, on_state=self._on_state, on_path_request=self._on_path,
+         )
+         # 중재기 상태를 받기 전에는 이동을 허용하지 않는다(부팅 직후 이동 금지).
+         self.server.set_motion_permitted(False, "puppy_control 상태 수신 전")
+@@ -200,13 +200,13 @@
+                 self._start_hold.reset()
+                 self._publish_locked(0.0, 0.0)
+ 
+-    def _on_path(self, path, owner):
++    def _on_path(self, path, owner, request_sequence=None):
+         now = time.monotonic()
+         with self._lock:
+             if path == ():
+                 self._follower.cancel("VR 취소")
+             elif self.path_enabled:
+-                self._follower.set_path(path, owner, now)
++                self._follower.set_path(path, owner, now, request_sequence=request_sequence)
+                 self._target = (0.0, 0.0)
+         self._publish_state(force=True)
+ 
+--- a/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/v2_server.py
++++ b/ros2_ws/src/puppy_vr_bridge/puppy_vr_bridge/v2_server.py
+@@ -96,12 +96,14 @@
+         stall_timeout: float = 0.5,
+         on_path: Optional[Callable[[tuple, Optional[str]], None]] = None,
+         clock: Callable[[], float] = time.monotonic,
++        on_path_request: Optional[Callable[[tuple, Optional[str], int], None]] = None,
+     ):
+         self.session = session
+         self._on_output = on_output
+         self._on_estop = on_estop
+         self._on_state = on_state
+-        self._on_path = on_path  # (경로 또는 () = 취소, 조종자 UUID)
++        self._on_path = on_path  # Legacy two-argument callback.
++        self._on_path_request = on_path_request  # Path, owner, accepted UDP sequence.
+         self._bind = bind_address
+         self._port = int(port)
+         self._poll = float(poll_interval)
+@@ -287,9 +289,13 @@
+             if result.velocity is not None:
+                 self._emit(result.velocity, result.event or "command")
+         self._send(address, ack)
+-        if result.path is not None and self._on_path is not None:
+-            try:
+-                self._on_path(result.path, path_owner)
++        if result.path is not None and (self._on_path_request is not None or self._on_path is not None):
++            try:
++                # Identity belongs to the actual callback, never the earlier ACK.
++                if self._on_path_request is not None:
++                    self._on_path_request(result.path, path_owner, ack["sequence"])
++                else:
++                    self._on_path(result.path, path_owner)
+             except Exception:
+                 LOGGER.exception("경로 전달 실패")
+         if estop_change is not None and self._on_estop is not None:

@@ -12,6 +12,7 @@ public static class BuildQuest
     [MenuItem("PuppyPi/Build Quest development APK")]
     public static void Build()
     {
+        StudyBuildMetadata.Write();
         ConfigureNetworkAccess();
         // Switch platforms before calling this method so script recompilation can finish.
         if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)

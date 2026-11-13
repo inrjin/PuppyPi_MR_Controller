@@ -22,12 +22,20 @@ namespace PuppyPi
         public PuppyPiVrPanel dashboard;
         public PuppyPiCockpitPlacement cockpitPlacement;
         public PuppyPiConnection connection;
+        public PuppyPiStudyClient studyClient;
+        public PuppyPiMapDataClient mapData;
+        public PuppyPiPathClient pathClient;
+        public PuppyPiMapWindow mapWindow;
         public bool showCameraScreenOnStart = true;
         [Range(10, 100)] public int speedPercent = 50;
 
         public PuppyPiV2Client DriveClient => driveClient;
         public BallGripInput GripInput => gripInput;
         public RobotRosBridge RosBridge => rosBridge;
+        public PuppyPiMediaClient MediaClient => mediaClient;
+        public PuppyPiMapDataClient MapData => mapData;
+        public PuppyPiPathClient PathClient => pathClient;
+        public PuppyPiMapWindow MapWindow => mapWindow;
         public PuppyPiConnection Connection => connection;
         public Texture CameraTexture => cameraStream != null ? cameraStream.Texture : null;
         public string CameraStatus => cameraStream != null ? cameraStream.Status : "Camera not configured";
@@ -39,14 +47,24 @@ namespace PuppyPi
         public double MapFrameAgeSeconds => mapStream != null ? mapStream.FrameAgeSeconds : double.PositiveInfinity;
         public string MediaStatusText => mediaClient != null ? mediaClient.Summary : "Media API not configured";
         public int SpeedPercent => speedPercent;
+        public bool StudyActive => studyClient != null && studyClient.Active;
+        public bool StudyConfigurationLocked => StudyActive && studyClient.ConfigurationLocked;
+        public bool StudyCameraVisible => !StudyActive || _studyCameraVisible;
+        public bool StudyMapVisible => !StudyActive || _studyMapVisible;
         public string LastResult { get; private set; } = "Release the grip before selecting a robot command.";
         public bool IsDiscovering => connection != null && connection.Discovery.Searching;
         public IReadOnlyList<DiscoveredPi> Devices => connection.Discovery.Devices;
         public bool CanExecuteMotion => MotionBlockReason() == null;
+        private bool OperatorSupervised => pathClient != null && pathClient.operatorSupervisedNavigation;
+        private bool FreshRobotStop => rosBridge != null &&
+            ((rosBridge.RobotStatusFresh && rosBridge.RobotStatus.estop) ||
+             (rosBridge.ArbiterStateFresh && rosBridge.ArbiterState.estop));
         public bool IsPositioningPanel => (floatingScreen != null && floatingScreen.IsGrabbed) ||
             (dashboard != null && dashboard.IsGrabbed) ||
-            (cockpitPlacement != null && cockpitPlacement.IsGrabbed);
+            (cockpitPlacement != null && cockpitPlacement.IsGrabbed) ||
+            (mapWindow != null && mapWindow.IsGrabbed);
         public bool CanClearStop => !_paused && _focused && gripInput != null && !gripInput.Grabbed &&
+            (pathClient == null || !pathClient.IsActive) &&
             !IsPositioningPanel &&
             driveClient != null && driveClient.networkEnabled && driveClient.Session.Connected &&
             driveClient.Session.ServerReason != "not_owner";
@@ -60,6 +78,9 @@ namespace PuppyPi
         private double _nextDiagnosticAt;
         private string _lastDiagnostic;
         private bool _ownsCameraScreen;
+        private bool _ownsMapWindow;
+        private bool _studyCameraVisible = true;
+        private bool _studyMapVisible = true;
         private static double Now => Time.realtimeSinceStartupAsDouble;
 
         private void Awake()
@@ -93,6 +114,14 @@ namespace PuppyPi
             if (cockpitPlacement == null) cockpitPlacement = gameObject.AddComponent<PuppyPiCockpitPlacement>();
             cockpitPlacement.input = gripInput;
             cockpitPlacement.cockpitRoot = gripInput != null && gripInput.baseFrame != null ? gripInput.baseFrame : transform;
+            if (studyClient == null) studyClient = GetComponent<PuppyPiStudyClient>();
+            if (studyClient == null) studyClient = gameObject.AddComponent<PuppyPiStudyClient>();
+            studyClient.controller = this;
+            if (mapData == null) mapData = GetComponent<PuppyPiMapDataClient>();
+            if (mapData == null) mapData = gameObject.AddComponent<PuppyPiMapDataClient>();
+            if (pathClient == null) pathClient = GetComponent<PuppyPiPathClient>();
+            if (pathClient == null) pathClient = gameObject.AddComponent<PuppyPiPathClient>();
+            pathClient.controller = this;
         }
 
         private void Start()
@@ -102,6 +131,7 @@ namespace PuppyPi
 
         public void ShowCameraScreen()
         {
+            if (!StudyCameraVisible || (StudyActive && studyClient.LayoutLocked)) return;
             if (floatingScreen == null)
             {
                 floatingScreen = new GameObject("PuppyPi movable camera screen").AddComponent<PuppyPiFloatingScreen>();
@@ -109,6 +139,18 @@ namespace PuppyPi
             }
             floatingScreen.controller = this;
             floatingScreen.ShowAndRecenter();
+        }
+
+        public void ShowMapWindow()
+        {
+            if (StudyActive || !StudyMapVisible) return;
+            if (mapWindow == null)
+            {
+                mapWindow = new GameObject("PuppyPi movable map editor").AddComponent<PuppyPiMapWindow>();
+                _ownsMapWindow = true;
+            }
+            mapWindow.controller = this;
+            mapWindow.ShowAndRecenter();
         }
 
         private void OnEnable()
@@ -137,20 +179,66 @@ namespace PuppyPi
                 cameraStream.Connect(_streamsHost);
                 mapStream.Connect(_streamsHost, "/lidar_map/image");
                 mediaClient.Connect(_streamsHost);
+                mapData.Connect(_streamsHost);
             }
 
-            if (rosBridge.IsConnected && rosBridge.RobotStatusFresh && rosBridge.ArbiterStateFresh)
+            // A delayed HTTP reply is not a map reset. Preserve the editing
+            // frame; execution separately requires fresh session metadata.
+            mapData.SetSession(mediaClient.MapInfo?.session);
+            pathClient.ObserveMapIdentity(mapData.Geometry?.frame ?? mediaClient.MapInfo?.frame, mapData.SessionId);
+
+            if (OperatorSupervised)
+            {
+                // Auxiliary owner/permission snapshots must not latch a second
+                // motion lock beside the authoritative command channels.
+                _remoteMotionBlocked = FreshRobotStop;
+            }
+            else if (rosBridge.IsConnected && rosBridge.RobotStatusFresh && rosBridge.ArbiterStateFresh)
             {
                 var state = rosBridge.ArbiterState;
                 _remoteMotionBlocked = state.estop || !state.vr_permitted;
             }
             // Unblocking never arms a held grip; the existing V2 session requires a new grab.
-            driveClient.SetExternalMotionBlocked(_paused || !_focused || IsPositioningPanel || _remoteMotionBlocked ||
+            driveClient.SetExternalMotionBlocked(_paused || !_focused || IsPositioningPanel ||
+                (mapWindow != null && mapWindow.IsDrawing) || _remoteMotionBlocked ||
                 rosBridge.HasPendingCommand || Now < _motionCooldownUntil);
             LogChannels();
         }
 
-        public void SetSpeedPercent(int percent) => ApplySpeed(percent, true);
+        public void SetSpeedPercent(int percent)
+        {
+            if (StudyActive) { LastResult = "Drive settings are fixed by the study configuration."; return; }
+            ApplySpeed(percent, true);
+        }
+
+        public void ApplyStudySettings(StudySettings settings)
+        {
+            if (settings == null) return;
+            if (settings.speed_percent >= 10 && settings.speed_percent <= 100)
+                ApplySpeed(settings.speed_percent, false);
+            if (gripInput != null && settings.max_tilt_degrees >= 5 && settings.max_tilt_degrees <= 60 &&
+                settings.deadzone_degrees >= 0 && settings.deadzone_degrees < settings.max_tilt_degrees &&
+                settings.sensitivity >= 0.1f && settings.sensitivity <= 3)
+            {
+                gripInput.maxTiltDegrees = settings.max_tilt_degrees;
+                gripInput.deadzoneDegrees = settings.deadzone_degrees;
+                gripInput.sensitivity = settings.sensitivity;
+                gripInput.invertForward = settings.invert_forward;
+                gripInput.invertTurn = settings.invert_turn;
+            }
+            _studyCameraVisible = settings.camera_visible;
+            _studyMapVisible = settings.map_visible;
+            if (floatingScreen != null) floatingScreen.SetPresentationVisible(settings.camera_visible);
+            if (mapWindow != null) mapWindow.SetPresentationVisible(settings.map_visible);
+        }
+
+        public void SetStudyLayoutLocked(bool locked)
+        {
+            if (cockpitPlacement != null) cockpitPlacement.SetPlacementLocked(locked);
+            if (floatingScreen != null) floatingScreen.SetPlacementLocked(locked);
+            if (dashboard != null) dashboard.SetPlacementLocked(locked);
+            if (mapWindow != null) mapWindow.SetPlacementLocked(locked);
+        }
 
         private void ApplySpeed(int percent, bool save)
         {
@@ -164,7 +252,21 @@ namespace PuppyPi
 
         private string MotionBlockReason()
         {
+            if (StudyActive) return "Pose and action commands are unavailable during the inspection study.";
+            if (pathClient != null && pathClient.IsActive) return "Stop the path before selecting a pose or action.";
+            if (mapWindow != null && mapWindow.IsDrawing) return "Finish drawing the path first.";
             if (_paused || !_focused) return "Return to the VR app before sending a command.";
+            if (OperatorSupervised)
+            {
+                if (driveClient == null) return "The control client is missing.";
+                if (rosBridge == null || !rosBridge.IsConnected) return "Robot command channel is disconnected.";
+                if (driveClient.Session.Emergency || driveClient.Session.Faulted || FreshRobotStop)
+                    return "Clear the stop or robot fault before requesting motion.";
+                if (rosBridge.HasPendingCommand || Now < _motionCooldownUntil) return "A robot command is already pending.";
+                // The RPC result decides current engine/owner permission. An
+                // old status or a separate UDP handshake does not disable RPCs.
+                return null;
+            }
             if (gripInput == null || driveClient == null) return "Grip references are missing.";
             if (gripInput.Grabbed) return "Release the grip before choosing a pose or action.";
             if (IsPositioningPanel) return "Release the console, dashboard and camera screen before choosing a pose or action.";
@@ -212,6 +314,7 @@ namespace PuppyPi
         public void UdpStop()
         {
             if (driveClient == null) return;
+            pathClient?.Cancel("Emergency stop");
             driveClient.EmergencyStop();
             LastResult = "VR emergency stop requested.";
         }
@@ -298,6 +401,7 @@ namespace PuppyPi
 
         private void HoldNeutral()
         {
+            pathClient?.Cancel("Motion interrupted");
             if (gripInput != null) gripInput.Invalidate();
             if (driveClient != null) driveClient.RequestNeutral();
         }
@@ -310,6 +414,7 @@ namespace PuppyPi
             cameraStream.Disconnect();
             mapStream.Disconnect();
             mediaClient.Disconnect();
+            mapData.Disconnect();
         }
 
         private void OnCommandCompleted(RobotRosCommandResult result)
@@ -340,15 +445,18 @@ namespace PuppyPi
             {
                 if (driveClient == null || rosBridge == null) return "Robot controls are initializing...";
                 V2Session session = driveClient.Session;
-                string control = !driveClient.networkEnabled ? "DISCONNECTED" : !session.Connected ? "WAITING FOR ACK" :
-                    session.ServerReason == "not_owner" ? "SESSION REJECTED: NOT OWNER" : session.Emergency ? "VR STOP" :
-                    session.Faulted ? "ROBOT FAULT" : !session.LastAccepted ? "CONTROL REJECTED" :
+                string udp = !driveClient.networkEnabled ? "DISCONNECTED" : !session.Connected ? "WAITING FOR ACK" :
+                    session.ServerReason == "not_owner" ? "SESSION REJECTED: NOT OWNER" : "CONNECTED";
+                string control = session.Emergency ? "VR STOP" : session.Faulted ? "ROBOT FAULT" :
+                    !driveClient.networkEnabled ? "DISCONNECTED" : !session.Connected ? "WAITING FOR ACK" :
+                    session.ServerReason == "not_owner" ? "SESSION REJECTED: NOT OWNER" : !session.LastAccepted ? "CONTROL REJECTED" :
+                    pathClient != null && pathClient.IsActive ? "PATH: " + pathClient.RemoteState.ToUpperInvariant() :
                     session.Armed ? "CONTROLLING" : "READY - RELEASE AND GRAB AGAIN";
                 var robot = rosBridge.RobotStatus;
                 var arbiter = rosBridge.ArbiterState;
                 string camera = cameraStream != null ? cameraStream.Status : "not configured";
                 return $"{driveClient.robotAddress}:{driveClient.port}  |  {control}\n" +
-                    $"ROS: {rosBridge.ConnectionState} ({(rosBridge.RobotStatusFresh && rosBridge.ArbiterStateFresh ? "LIVE" : "STALE")})  |  Engine: {robot?.engine ?? "unknown"}\n" +
+                    $"UDP: {udp}  |  ROS: {rosBridge.ConnectionState} ({(rosBridge.RobotStatusFresh && rosBridge.ArbiterStateFresh ? "LIVE" : "STALE")})  |  Engine: {robot?.engine ?? "unknown"}\n" +
                     $"Owner: {arbiter?.owner ?? "none"}  |  Robot stop: {(arbiter == null ? "unknown" : arbiter.estop.ToString())}  |  VR permitted: {(arbiter == null ? "unknown" : arbiter.vr_permitted.ToString())}\n" +
                     $"Status: {(rosBridge.RobotStatusFresh && rosBridge.ArbiterStateFresh ? "LIVE" : "STALE / WAITING")}  |  Camera: {camera}\n" +
                     $"Grab: {(gripInput != null && gripInput.Grabbed)}  |  Tracking: {(gripInput != null && gripInput.TrackingValid)}  |  Speed: {speedPercent}%\n" +
@@ -373,6 +481,7 @@ namespace PuppyPi
 
         private void OnDisable()
         {
+            pathClient?.Cancel("Controller disabled");
             if (_eventsBound && rosBridge != null) rosBridge.CommandCompleted -= OnCommandCompleted;
             _eventsBound = false;
             if (driveClient != null) driveClient.SetExternalMotionBlocked(true);
@@ -381,9 +490,16 @@ namespace PuppyPi
 
         private void OnDestroy()
         {
-            if (!_ownsCameraScreen || floatingScreen == null) return;
-            if (Application.isPlaying) Destroy(floatingScreen.gameObject);
-            else DestroyImmediate(floatingScreen.gameObject);
+            if (_ownsCameraScreen && floatingScreen != null)
+            {
+                if (Application.isPlaying) Destroy(floatingScreen.gameObject);
+                else DestroyImmediate(floatingScreen.gameObject);
+            }
+            if (_ownsMapWindow && mapWindow != null)
+            {
+                if (Application.isPlaying) Destroy(mapWindow.gameObject);
+                else DestroyImmediate(mapWindow.gameObject);
+            }
         }
     }
 }

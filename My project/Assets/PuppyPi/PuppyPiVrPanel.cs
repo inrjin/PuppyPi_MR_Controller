@@ -32,6 +32,8 @@ namespace PuppyPi
         private const int PosesPage = 2;
         private const int ActionsPage = 3;
         private const int ConnectionPage = 4;
+        private const int StudyPage = 5;
+        public bool PlacementLocked { get; private set; }
         private static readonly Color Background = new Color(0.035f, 0.06f, 0.085f, 0.98f);
         private static readonly Color ButtonColor = new Color(0.12f, 0.21f, 0.26f, 1);
         private static readonly Color Accent = new Color(0.21f, 0.76f, 0.66f, 1);
@@ -44,7 +46,7 @@ namespace PuppyPi
         private readonly List<Button> _deviceButtons = new List<Button>();
         private readonly DiscoveredPi[] _displayedDevices = new DiscoveredPi[DevicesPerPage];
         private readonly List<Button> _tabs = new List<Button>();
-        private readonly GameObject[] _pages = new GameObject[5];
+        private readonly GameObject[] _pages = new GameObject[6];
         private Font _font;
         private GameObject _panelRoot;
         private Grabbable _grabbable;
@@ -61,6 +63,9 @@ namespace PuppyPi
         private Text _selectedActionLabel;
         private Text _actionPageLabel;
         private Text _networkInfo;
+        private Text _studyInfo;
+        private Text _studyAddress;
+        private string _studyHost = "";
         private Text _devicePageLabel;
         private Button _hostButton;
         private Button _portButton;
@@ -142,12 +147,12 @@ namespace PuppyPi
             Command(root.transform, "RESET ROBOT", 630, 158, 186, 52, c => c.ResetRobot(),
                 c => c.RosBridge != null && c.RosBridge.IsConnected && c.CanClearStop);
             Command(root.transform, "-10%", 24, 222, 145, 46,
-                c => c.SetSpeedPercent(Mathf.Clamp(c.SpeedPercent - 10, 10, 100)));
+                c => c.SetSpeedPercent(Mathf.Clamp(c.SpeedPercent - 10, 10, 100)), c => !c.StudyActive);
             _speed = Label(root.transform, "SPEED 50%", 183, 222, 474, 46, 21, Accent, TextAnchor.MiddleCenter);
             Command(root.transform, "+10%", 671, 222, 145, 46,
-                c => c.SetSpeedPercent(Mathf.Clamp(c.SpeedPercent + 10, 10, 100)));
+                c => c.SetSpeedPercent(Mathf.Clamp(c.SpeedPercent + 10, 10, 100)), c => !c.StudyActive);
 
-            string[] tabNames = { "DASHBOARD", "MAP", "POSES", "ACTIONS", "CONNECT" };
+            string[] tabNames = { "DASHBOARD", "MAP", "POSES", "ACTIONS", "CONNECT", "STUDY" };
             const float tabGap = 12;
             float tabWidth = (792 - tabGap * (tabNames.Length - 1)) / tabNames.Length;
             for (int i = 0; i < tabNames.Length; i++)
@@ -161,6 +166,7 @@ namespace PuppyPi
             BuildPoses(_pages[PosesPage].transform);
             BuildActions(_pages[ActionsPage].transform);
             BuildConnection(_pages[ConnectionPage].transform);
+            BuildStudy(_pages[StudyPage].transform);
             _result = Label(root.transform, "Select a control to begin.", 24, 706, 792, 66, 17, Muted);
             Label(root.transform, "Touch buttons | Grab the outer rim to move | Two hands to resize",
                 24, 777, 792, 18, 14, Muted, TextAnchor.MiddleCenter);
@@ -168,6 +174,45 @@ namespace PuppyPi
             root.SetActive(true);
             _panelRoot.SetActive(true);
             Refresh();
+        }
+
+        private void BuildStudy(Transform parent)
+        {
+            if (controller != null && controller.studyClient != null) _studyHost = controller.studyClient.serviceAddress;
+            _studyInfo = Label(parent, "Study service is not connected.", 0, 0, 414, 146, 17, Muted);
+            _studyAddress = Label(parent, "SERVICE IP: _", 0, 148, 414, 40, 21, Color.white);
+            Button(parent, "ROBOT HOST", 0, 194, 196, 46, () => {
+                if (controller != null && controller.DriveClient != null) _studyHost = controller.DriveClient.robotAddress;
+            });
+            Button(parent, "CLEAR IP", 208, 194, 196, 46, () => _studyHost = "");
+            Button(parent, "ENTER STUDY", 0, 250, 196, 46, () => {
+                if (controller == null || controller.studyClient == null) return;
+                if (!controller.studyClient.EnterStudy(_studyHost, out string error)) _localNotice = error;
+                else _localNotice = "";
+            }, Accent);
+            Button(parent, "EXIT STUDY", 208, 250, 196, 46, () => controller?.studyClient?.ExitStudy());
+            Button(parent, "ABORT TRIAL", 0, 304, 404, 46, () => controller?.studyClient?.AbortTrial(), Danger, true);
+            string[] keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "DEL" };
+            for (int i = 0; i < keys.Length; i++)
+            {
+                string key = keys[i];
+                Button(parent, key, 438 + i % 3 * 122, 50 + i / 3 * 54, 110, 46, () => {
+                    if (key == "DEL") _studyHost = _studyHost.Length > 0 ? _studyHost.Substring(0, _studyHost.Length - 1) : "";
+                    else if (_studyHost.Length < 15) _studyHost += key;
+                });
+            }
+            Label(parent, "Operator starts trials from the study CLI.", 438, 278, 354, 70, 18, Muted);
+            Button(parent, "FEEDBACK POLICY", 438, 0, 354, 42, () => {
+                var study = controller != null ? controller.studyClient : null;
+                if (study == null || study.Active) return;
+                study.presentationPolicy = (StudyPresentationPolicy)(((int)study.presentationPolicy + 1) % 4);
+            });
+        }
+
+        public void SetPlacementLocked(bool locked)
+        {
+            PlacementLocked = locked;
+            if (_grabbable != null) _grabbable.enabled = !locked;
         }
 
         private void ConfigureGrabFrame(Transform canvas)
@@ -289,7 +334,8 @@ namespace PuppyPi
             Label(parent, "Hold the ball grip to drive.\n\nRelease to stop.\n\nAfter a stop, release and re-grab.",
                 522, 46, 270, 130, 18, Color.white);
             Command(parent, "OPEN / RECENTER CAMERA", 522, 186, 270, 44, c => c.ShowCameraScreen());
-            Command(parent, "STAND / GO HOME", 522, 238, 270, 62, c => c.GoHome(), c => c.CanExecuteMotion);
+            Command(parent, "STAND / GO HOME", 522, 238, 270, 62, c => c.GoHome(), c => c.CanExecuteMotion,
+                allowSupervisedGrab: true);
             Label(parent, "Camera view is separate from motion control.", 0, 324, 792, 24, 15, Muted);
         }
 
@@ -298,7 +344,9 @@ namespace PuppyPi
             MapView = MediaView(parent, "Lidar map", "Map frame", 1);
             _mapNotice = Label(parent, "NO SIGNAL | WAITING FOR MAP", 0, 284, 496, 36, 15, Muted, TextAnchor.MiddleCenter);
             Label(parent, "LIDAR MAP", 522, 0, 270, 32, 22, Accent);
-            _mediaDetails = Label(parent, "Waiting for media status", 522, 44, 270, 270, 15, Muted);
+            _mediaDetails = Label(parent, "Waiting for media status", 522, 44, 270, 210, 15, Muted);
+            Command(parent, "OPEN MAP / DRAW PATH", 522, 264, 270, 50,
+                c => c.ShowMapWindow(), c => !c.StudyActive);
             Label(parent, "Red: robot position  |  Blue: traveled path", 0, 324, 792, 24, 15, Muted);
         }
 
@@ -333,7 +381,8 @@ namespace PuppyPi
                 _poseButtons.Add(button);
             }
             Command(parent, "APPLY SELECTED POSE", 0, 294, 792, 56,
-                c => c.ExecutePose(_selectedPose), c => c.CanExecuteMotion && !string.IsNullOrEmpty(_selectedPose), Accent);
+                c => c.ExecutePose(_selectedPose), c => c.CanExecuteMotion && !string.IsNullOrEmpty(_selectedPose), Accent,
+                allowSupervisedGrab: true);
         }
 
         private void BuildActions(Transform parent)
@@ -354,7 +403,8 @@ namespace PuppyPi
             _actionPageLabel = Label(parent, "1 / 4", 190, 246, 412, 42, 19, Muted, TextAnchor.MiddleCenter);
             Button(parent, "NEXT", 612, 246, 180, 42, () => ChangeActionPage(1));
             Command(parent, "RUN SELECTED ACTION", 0, 300, 792, 50,
-                c => c.ExecuteAction(_selectedAction), c => c.CanExecuteMotion && !string.IsNullOrEmpty(_selectedAction), Accent);
+                c => c.ExecuteAction(_selectedAction), c => c.CanExecuteMotion && !string.IsNullOrEmpty(_selectedAction), Accent,
+                allowSupervisedGrab: true);
             RefreshActionPage();
         }
 
@@ -405,6 +455,7 @@ namespace PuppyPi
 
         private void ShowPage(int index)
         {
+            if (index == MapPage && controller != null && !controller.StudyMapVisible) return;
             _visiblePage = index;
             for (int i = 0; i < _pages.Length; i++)
             {
@@ -426,13 +477,28 @@ namespace PuppyPi
             // Keep connection, engine, ownership and VR permission visible without clipping.
             string[] statusLines = (controller.StatusText ?? "").Split('\n');
             _summary.text = string.Join("\n", statusLines, 0, Mathf.Min(3, statusLines.Length));
-            _result.text = string.IsNullOrEmpty(_localNotice) ? controller.LastResult : _localNotice;
+            _result.text = controller.StudyActive ? controller.studyClient.DisplayText :
+                string.IsNullOrEmpty(_localNotice) ? controller.LastResult : _localNotice;
             _speed.text = $"DRIVE SPEED  {controller.SpeedPercent}%";
             RefreshMedia(CameraView, _cameraNotice, controller.CameraTexture, controller.CameraLive,
                 controller.CameraStatus, controller.CameraFrameAgeSeconds, "ROBOT CAMERA");
             RefreshMedia(MapView, _mapNotice, controller.MapTexture, controller.MapLive,
                 controller.MapStatus, controller.MapFrameAgeSeconds, "LIDAR MAP");
             _mediaDetails.text = controller.MediaStatusText;
+            CameraView.gameObject.SetActive(controller.StudyCameraVisible);
+            MapView.gameObject.SetActive(controller.StudyMapVisible);
+            _mediaDetails.gameObject.SetActive(controller.StudyMapVisible);
+            _cameraNotice.text = controller.StudyCameraVisible ? _cameraNotice.text : "Camera hidden by study configuration.";
+            _tabs[MapPage].interactable = controller.StudyMapVisible;
+            if (_visiblePage == MapPage && !controller.StudyMapVisible) ShowPage(StudyPage);
+            if (_studyInfo != null && controller.studyClient != null)
+            {
+                var study = controller.studyClient;
+                _studyInfo.text = study.Notice + "\nClient:\n" + study.ControlClientId + "\n" + (study.Status != null ?
+                    study.Status.difficulty_id : "Release the grip before readiness.") +
+                    "\nPort: " + study.servicePort + " | " + study.presentationPolicy;
+                _studyAddress.text = "SERVICE IP: " + _studyHost + "_";
+            }
             foreach (var item in _gated) item.Key.interactable = item.Value == null || item.Value(controller);
             if (_visiblePage == ConnectionPage) RefreshDevices();
         }
@@ -539,6 +605,7 @@ namespace PuppyPi
 
         public void Recenter()
         {
+            if (PlacementLocked) return;
             var camera = Camera.main;
             if (camera == null) return;
             // Cancel selections before resetting grab offsets, preserving the user's chosen scale.
@@ -569,15 +636,18 @@ namespace PuppyPi
 
         private Button Command(Transform parent, string title, float x, float y, float width, float height,
             Action<PuppyPiRobotController> callback, Func<PuppyPiRobotController, bool> enabled = null, Color? color = null,
-            bool allowWhileGrabbed = false)
+            bool allowWhileGrabbed = false, bool allowSupervisedGrab = false)
         {
             var button = Button(parent, title, x, y, width, height, () =>
             {
                 if (controller == null || (enabled != null && !enabled(controller))) return;
+                bool supervised = allowSupervisedGrab && !controller.StudyActive &&
+                    controller.PathClient != null && controller.PathClient.operatorSupervisedNavigation;
+                if (IsGrabbed && !allowWhileGrabbed && !supervised) return;
                 _localNotice = "";
                 callback(controller);
                 Refresh();
-            }, color, allowWhileGrabbed);
+            }, color, allowWhileGrabbed: true);
             _gated.Add(new KeyValuePair<Button, Func<PuppyPiRobotController, bool>>(button, enabled));
             return button;
         }

@@ -149,10 +149,10 @@ namespace PuppyPi.Tests
             };
             var pages = (GameObject[])typeof(PuppyPiVrPanel)
                 .GetField("_pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(panel);
-            Assert.That(pages.Length, Is.EqualTo(5));
+            Assert.That(pages.Length, Is.EqualTo(6));
             Assert.That(panel.MapView.transform.parent.name, Is.EqualTo("Map frame"));
             Assert.That(panel.MapView.gameObject.activeInHierarchy, Is.False);
-            foreach (string name in new[] { "MAP", "POSES", "ACTIONS", "CONNECT", "DASHBOARD" })
+            foreach (string name in new[] { "MAP", "POSES", "ACTIONS", "CONNECT", "DASHBOARD", "STUDY" })
             {
                 var tab = panel.GetComponentsInChildren<Button>(true)
                     .Single(item => item.gameObject.name == name);

@@ -21,6 +21,18 @@ namespace PuppyPi
         public Text NoSignalLabel { get; private set; }
         public Text StatusLabel { get; private set; }
         public bool IsVisible => _screenRoot != null && _screenRoot.activeInHierarchy;
+        public bool PlacementLocked { get; private set; }
+
+        public void SetPlacementLocked(bool locked)
+        {
+            PlacementLocked = locked;
+            if (_grabbable != null) _grabbable.enabled = !locked;
+        }
+
+        public void SetPresentationVisible(bool visible)
+        {
+            if (_screenRoot != null) _screenRoot.SetActive(visible && isActiveAndEnabled);
+        }
         public bool IsGrabbed => IsVisible && _grabbable != null && _grabbable.SelectingPoints != null &&
             _grabbable.SelectingPointsCount > 0;
 
@@ -38,6 +50,7 @@ namespace PuppyPi
 
         public void ShowAndRecenter()
         {
+            if (PlacementLocked) return;
             EnsureWindow();
             // Disabling the Grabbable cancels existing selections before its
             // grab offsets become invalid after recentering.

@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using NUnit.Framework;
 using UnityEngine;
@@ -71,6 +72,65 @@ namespace PuppyPi.Tests
                 }
                 yield return null;
             }
+        }
+
+        [UnityTest]
+        public IEnumerator SavedStartupEndpointReplacesTheSceneDefaultBeforeTheFirstPacket()
+        {
+            var server = Server();
+            var client = Client(out _);
+            client.robotAddress = "192.0.2.123";
+            client.networkEnabled = true;
+            string originalId = client.Session.ClientId;
+            var connection = _root.AddComponent<PuppyPiConnection>();
+            connection.client = client;
+            connection.AddressText = "127.0.0.1";
+            connection.PortText = Port(server).ToString();
+            var restore = typeof(PuppyPiConnection).GetMethod("RestoreSavedEndpoint", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That((bool)restore.Invoke(connection, null), Is.True);
+            Assert.That(client.Session.ClientId, Is.EqualTo(originalId), "restoring an address is not a new control session");
+            yield return Pump(server, .2f);
+            Assert.That(client.Session.Connected, Is.True);
+            Assert.That(client.Session.NeutralConfirmed, Is.True);
+            Assert.That(client.LastCommand.control_active, Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator SavedStartupEndpointCannotOverrideAnExplicitConnection()
+        {
+            var saved = Server();
+            var explicitTarget = Server();
+            var client = Client(out _);
+            Assert.That(client.ConnectTo("127.0.0.1", Port(explicitTarget), out string error), Is.True, error);
+            var connection = _root.AddComponent<PuppyPiConnection>();
+            connection.client = client;
+            connection.AddressText = "127.0.0.1";
+            connection.PortText = Port(saved).ToString();
+            var restore = typeof(PuppyPiConnection).GetMethod("RestoreSavedEndpoint", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That((bool)restore.Invoke(connection, null), Is.False);
+            yield return Pump(explicitTarget, .2f);
+            Assert.That(client.Session.Connected, Is.True);
+            Assert.That(saved.Available, Is.Zero);
+            Assert.That(client.port, Is.EqualTo(Port(explicitTarget)));
+        }
+
+        [UnityTest]
+        public IEnumerator SavedStartupEndpointNeverEnablesOfflineModeOrClearsAnEmergency()
+        {
+            var server = Server();
+            var client = Client(out _);
+            var connection = _root.AddComponent<PuppyPiConnection>();
+            connection.client = client;
+            connection.AddressText = "127.0.0.1";
+            connection.PortText = Port(server).ToString();
+            var restore = typeof(PuppyPiConnection).GetMethod("RestoreSavedEndpoint", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That((bool)restore.Invoke(connection, null), Is.False);
+            Assert.That(client.networkEnabled, Is.False);
+            client.networkEnabled = true;
+            client.EmergencyStop();
+            Assert.That((bool)restore.Invoke(connection, null), Is.True);
+            Assert.That(client.Session.Emergency, Is.True);
+            yield return null;
         }
 
         [UnityTest]
